@@ -496,8 +496,14 @@
     $("#dbStatus").textContent = "Loading CSV files from dataset/…";
     try {
       const files = await Promise.all(CSV_GENRE_FILES.map(async (genre) => {
-        const path = `dataset/${genre}.csv`;
-        const response = await fetch(path, { cache: "no-store" });
+        const url = new URL(
+            `./dataset/${genre}.csv`,
+            document.baseURI
+        );
+        
+        const response = await fetch(url.href, {
+            cache: "no-store"
+        });
         if (!response.ok) throw new Error(`${path} not found (HTTP ${response.status})`);
         return new File([await response.text()], `${genre}.csv`, { type: "text/csv" });
       }));
