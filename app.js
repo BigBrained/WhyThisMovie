@@ -46,6 +46,19 @@
   let explicitTheme = null;
 
   const posterCache = new Map();
+  // TMDB poster paths are independent of a user's token, so cache successful lookups
+  // and confirmed no-poster results for this page session. In-flight requests are shared
+  // when the recommendation list changes quickly (for example, while moving the mix slider).
+  const tmdbPosterCache = new Map();
+  const tmdbPosterRequests = new Map();
+  let tmdbAccessToken = "";
+  let posterRenderGeneration = 0;
+  try {
+    tmdbAccessToken = sessionStorage.getItem("whyThisMovieTmdbReadToken") || "";
+  } catch (error) {
+    console.warn("[WhyThisMovie] Session storage is unavailable; the TMDB token will not persist across page refreshes.");
+  }
+  if ($("#tmdbToken")) $("#tmdbToken").value = tmdbAccessToken;
 
   const currentRatings = () => [...customRatings];
 
@@ -151,6 +164,180 @@
     return imageUrl;
   }
 
+
+  function normalizeMovieTitle(value) {
+    return String(value || "")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  }
+
+  async function tmdbJSON(url, token) {
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const error = new Error(`TMDB returned HTTP ${response.status}.`);
+      error.status = response.status;
+      throw error;
+    }
+
+    return response.json();
+  }
+
+  async function requestTmdbPoster(movie, token) {
+    const imdbId = String(movie?.id || "").trim();
+    const cacheKey = imdbId || `${normalizeMovieTitle(movie?.title)}|${movie?.year || ""}`;
+    if (tmdbPosterCache.has(cacheKey)) return tmdbPosterCache.get(cacheKey);
+
+    const requestKey = `${cacheKey}\u0000${token}`;
+    if (tmdbPosterRequests.has(requestKey)) return tmdbPosterRequests.get(requestKey);
+
+    const request = (async () => {
+      let posterPath = null;
+
+      if (/^tt\d+$/i.test(imdbId)) {
+        const findUrl = new URL(`https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}`);
+        findUrl.searchParams.set("external_source", "imdb_id");
+        findUrl.searchParams.set("language", "en-US");
+        const found = await tmdbJSON(findUrl.href, token);
+        posterPath = found.movie_results?.find((result) => result.poster_path)?.poster_path || null;
+      }
+
+      // Some CSV IDs are absent or unmapped. Search by title/year, but only accept an
+      // exact normalized title match to avoid displaying a poster for a different film.
+      if (!posterPath && movie?.title) {
+        const searchUrl = new URL("https://api.themoviedb.org/3/search/movie");
+        searchUrl.searchParams.set("query", movie.title);
+        searchUrl.searchParams.set("language", "en-US");
+        if (movie.year) searchUrl.searchParams.set("year", String(movie.year));
+        const search = await tmdbJSON(searchUrl.href, token);
+        const wanted = normalizeMovieTitle(movie.title);
+        const exact = (search.results || []).find((result) => {
+          const resultTitle = normalizeMovieTitle(result.title || result.original_title);
+          const resultYear = Number(String(result.release_date || "").slice(0, 4)) || null;
+          return resultTitle === wanted && (!movie.year || !resultYear || resultYear === Number(movie.year)) && result.poster_path;
+        });
+        posterPath = exact?.poster_path || null;
+      }
+
+      const posterUrl = posterPath ? `https://image.tmdb.org/t/p/w500${posterPath}` : null;
+      tmdbPosterCache.set(cacheKey, posterUrl);
+      return posterUrl;
+    })();
+
+    tmdbPosterRequests.set(requestKey, request);
+    try {
+      return await request;
+    } finally {
+      if (tmdbPosterRequests.get(requestKey) === request) tmdbPosterRequests.delete(requestKey);
+    }
+  }
+
+  function configurePosterFallback(image) {
+    const movieId = Number(image.dataset.m);
+    const localUrl = new URL(`./posters/${movieId}.jpg`, document.baseURI).href;
+    image.dataset.localSrc = localUrl;
+    image.dataset.tmdbSrc = "";
+    image.dataset.fallbackApplied = "false";
+
+    image.onerror = () => {
+      const failedUrl = image.currentSrc || image.src;
+      if (image.dataset.tmdbSrc && failedUrl === image.dataset.tmdbSrc) {
+        image.dataset.tmdbSrc = "";
+        image.src = image.dataset.localSrc;
+        return;
+      }
+
+      if (failedUrl === image.dataset.localSrc && image.dataset.fallbackApplied !== "true") {
+        image.dataset.fallbackApplied = "true";
+        image.src = generatedPoster(movieId);
+      }
+    };
+
+    image.src = localUrl;
+  }
+
+  async function refreshDisplayedPosters() {
+    const generation = ++posterRenderGeneration;
+    const images = [...$("#cards").querySelectorAll("img[data-m]")];
+    images.forEach(configurePosterFallback);
+
+    const status = $("#tmdbStatus");
+    if (!tmdbAccessToken) {
+      if (status) status.textContent = "No token set. Local JPGs are used when available; other posters use generated SVGs.";
+      return;
+    }
+
+    if (status) status.textContent = `Looking up posters for ${images.length} displayed films on TMDB…`;
+    if (!images.length) {
+      if (status) status.textContent = "Your current shortlist has no films to look up yet. Rate a few films first.";
+      return;
+    }
+
+    const results = await Promise.allSettled(images.map(async (image) => {
+      const movieId = Number(image.dataset.m);
+      const movie = activeData.movies[movieId];
+      if (!movie) return false;
+
+      const posterUrl = await requestTmdbPoster(movie, tmdbAccessToken);
+      if (generation !== posterRenderGeneration || !image.isConnected) return false;
+      if (!posterUrl) return false;
+
+      image.dataset.tmdbSrc = posterUrl;
+      image.dataset.fallbackApplied = "false";
+      image.src = posterUrl;
+      return true;
+    }));
+
+    if (generation !== posterRenderGeneration) return;
+    const matched = results.filter((result) => result.status === "fulfilled" && result.value).length;
+    const errors = results.filter((result) => result.status === "rejected").map((result) => result.reason);
+    const authError = errors.find((error) => error?.status === 401 || error?.status === 403);
+    if (authError) {
+      if (status) status.textContent = `TMDB rejected this token (HTTP ${authError.status}). Check your API Read Access Token. Local/SVG fallback remains active.`;
+    } else if (errors.length) {
+      const first = errors[0];
+      if (status) status.textContent = `TMDB could not load some posters${first?.status ? ` (HTTP ${first.status})` : ""}. Local/SVG fallback remains active.`;
+    } else if (status) {
+      status.textContent = matched
+        ? `TMDB posters loaded for ${matched} of ${images.length} displayed films. Any missing posters use local JPG/SVG fallback.`
+        : "No matching TMDB posters were found for this shortlist. Local JPG/SVG fallback remains active.";
+    }
+  }
+
+  function applyTmdbToken() {
+    const token = $("#tmdbToken")?.value.trim() || "";
+    if (!token) {
+      if ($("#tmdbStatus")) $("#tmdbStatus").textContent = "Paste your TMDB API Read Access Token first.";
+      return;
+    }
+
+    tmdbAccessToken = token;
+    try {
+      sessionStorage.setItem("whyThisMovieTmdbReadToken", token);
+    } catch (error) {
+      // The active token still works even when session storage is blocked.
+    }
+    refreshDisplayedPosters();
+  }
+
+  function clearTmdbToken() {
+    tmdbAccessToken = "";
+    if ($("#tmdbToken")) $("#tmdbToken").value = "";
+    try {
+      sessionStorage.removeItem("whyThisMovieTmdbReadToken");
+    } catch (error) {
+      // Clearing the in-memory token is still sufficient for this page.
+    }
+    refreshDisplayedPosters();
+  }
 
   function buildGenreControls() {
     $("#genres").innerHTML = activeGenres.map((genre, index) => {
@@ -329,16 +516,9 @@
     }).join("");
 
     $("#cards").setAttribute("aria-busy", "false");
-    // Try the zero-based local poster first (for example posters/0.jpg).
-    // Missing or unreadable files fall back to the built-in SVG artwork.
-    $("#cards").querySelectorAll("img[data-m]").forEach((image) => {
-      image.addEventListener("error", () => {
-        if (image.dataset.fallbackApplied === "true") return;
-
-        image.dataset.fallbackApplied = "true";
-        image.src = generatedPoster(Number(image.dataset.m));
-      }, { once: true });
-    });
+    // Load local posters first, then replace them with TMDB artwork when a token is active.
+    // Missing/failed TMDB images fall back to a local JPG, then to generated SVG artwork.
+    refreshDisplayedPosters();
 
     $("#hid").innerHTML = hiddenMovies.size
       ? `
@@ -496,14 +676,8 @@
     $("#dbStatus").textContent = "Loading CSV files from dataset/…";
     try {
       const files = await Promise.all(CSV_GENRE_FILES.map(async (genre) => {
-        const url = new URL(
-            `./dataset/${genre}.csv`,
-            document.baseURI
-        );
-        
-        const response = await fetch(url.href, {
-            cache: "no-store"
-        });
+        const path = `dataset/${genre}.csv`;
+        const response = await fetch(path, { cache: "no-store" });
         if (!response.ok) throw new Error(`${path} not found (HTTP ${response.status})`);
         return new File([await response.text()], `${genre}.csv`, { type: "text/csv" });
       }));
@@ -652,6 +826,8 @@
     button.addEventListener("click", () => switchTab(button.dataset.tab));
   });
   listen("#themeToggle", "click", switchTheme);
+  listen("#tmdbApply", "click", applyTmdbToken);
+  listen("#tmdbClear", "click", clearTmdbToken);
   updateThemeLabel();
 
   // Always use the project's dataset/ directory. There is no folder picker or bundled catalogue.
