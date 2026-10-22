@@ -30,7 +30,7 @@ The app fetches the known 13 filenames from `dataset/` automatically. There is n
 
 Rate at least two or three movies you know. The model combines genre affinity, shared directors, overlapping cast and release era; IMDb rating and vote count help break ties. Movie IDs are merged across CSV files. Aggregate IMDb ratings are not individual user histories, so a collaborative-filtering benchmark is not available from these CSVs.
 
-Everything runs locally in the browser after the CSVs load. The browser does not upload your ratings or catalogue.
+Everything runs locally in the browser after the CSVs load. The browser does not upload your ratings or catalogue. If you enter a TMDB API Read Access Token in the **Movie posters** panel, the app looks up posters for the currently displayed movies using each row’s IMDb ID (with an exact title/year search fallback). The token is held in the current tab’s `sessionStorage` and sent directly to TMDB; it is not written into the project files. TMDB artwork is preferred when found, followed by `posters/{index}.jpg` and then the generated SVG poster. Never hardcode your personal token into a public GitHub Pages repository.
 
 ## Download posters quickly
 
