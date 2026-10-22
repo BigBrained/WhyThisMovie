@@ -9,10 +9,21 @@
     />
     <meta name="theme-color" content="#f6f5ef" />
     <title>WhyThisMovie — Movie recommendations, explained</title>
-    <link rel="stylesheet" href="styles.css?v=20261022-4" />
+    <link rel="stylesheet" href="styles.css?v=20261023-1" />
   </head>
 
   <body>
+    <div id="appLoader" class="app-loader" role="status" aria-live="polite">
+      <div class="app-loader-card">
+        <div class="brand-mark loader-brand-mark" aria-hidden="true"><span></span></div>
+        <div class="loader-spinner" aria-hidden="true"></div>
+        <h1 id="loaderTitle">Getting your films ready</h1>
+        <p id="loaderMessage">Checking this device for your saved catalogue.</p>
+        <p id="loaderDetail" class="loader-detail" hidden></p>
+        <button id="loaderRetry" class="b" type="button" hidden>Try again</button>
+      </div>
+    </div>
+
     <header class="site-header">
       <div class="wrap topbar">
         <a class="brand" href="#top" aria-label="WhyThisMovie home">
@@ -58,10 +69,13 @@
                 <span class="step-number" aria-hidden="true">DB</span>
                 <div>
                   <h2 id="databaseHeading">Your movie catalogue</h2>
-                  <p class="panel-subtitle">Loaded automatically from the local <code>dataset/</code> directory beside this page.</p>
+                  <p class="panel-subtitle">The catalogue is saved in this browser after its first download, so later visits are faster.</p>
                 </div>
               </div>
-              <p class="mut" id="dbStatus" role="status" aria-live="polite">Looking for <code>dataset/*.csv</code>…</p>
+              <div class="catalogue-status-row">
+                <p class="mut" id="dbStatus" role="status" aria-live="polite">Checking this device’s saved catalogue…</p>
+                <button class="b ghost" id="refreshCatalogue" type="button" disabled>Refresh catalogue</button>
+              </div>
             </section>
 
             <section class="panel poster-settings" aria-labelledby="tmdbHeading">
@@ -222,8 +236,8 @@
       <div class="wrap">Made for more considered movie nights. Your ratings stay in this browser session.</div>
     </footer>
 
-    <script src="recommender.js?v=20261022-4"></script>
-    <script src="csv-database.js?v=20261022-4"></script>
-    <script src="app.js?v=20261022-5"></script>
+    <script src="recommender.js?v=20261023-1"></script>
+    <script src="csv-database.js?v=20261023-1"></script>
+    <script src="app.js?v=20261023-1"></script>
   </body>
 </html>
