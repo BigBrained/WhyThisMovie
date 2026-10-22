@@ -1419,3 +1419,114 @@ ul.l b {
 .poster-settings #tmdbHelp {
   margin-top: 9px;
 }
+
+/* First-load and cached-load screen */
+.app-loader {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--page);
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 220ms ease, visibility 220ms ease;
+}
+
+.app-loader.is-done {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.app-loader-card {
+  width: min(100%, 390px);
+  padding: 34px 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.loader-brand-mark {
+  margin: 0 auto 22px;
+}
+
+.loader-spinner {
+  width: 30px;
+  height: 30px;
+  margin: 0 auto 20px;
+  border: 3px solid var(--line);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: catalogue-spin 850ms linear infinite;
+}
+
+.app-loader h1 {
+  margin: 0 0 8px;
+  font-size: clamp(20px, 5vw, 25px);
+  line-height: 1.25;
+  letter-spacing: -0.035em;
+}
+
+.app-loader p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.app-loader .loader-detail {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-small);
+  background: var(--surface-soft);
+  text-align: left;
+  font-size: 12px;
+}
+
+.app-loader #loaderRetry {
+  margin: 20px auto 0;
+}
+
+.app-loader #loaderRetry[hidden],
+.app-loader #loaderDetail[hidden] {
+  display: none !important;
+}
+
+.app-loader.has-error .loader-spinner {
+  display: none;
+}
+
+.catalogue-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.catalogue-status-row p {
+  flex: 1 1 180px;
+  margin: 0;
+}
+
+.catalogue-status-row .b {
+  flex: 0 0 auto;
+}
+
+@keyframes catalogue-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-loader,
+  .loader-spinner {
+    transition: none;
+    animation: none;
+  }
+}
