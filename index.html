@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="Discover movie recommendations with clear explanations of why each film fits your taste."
+    />
+    <meta name="theme-color" content="#f6f5ef" />
+    <title>WhyThisMovie — Movie recommendations, explained</title>
+    <link rel="stylesheet" href="styles.css?v=20261022-3" />
+  </head>
+
+  <body>
+    <header class="site-header">
+      <div class="wrap topbar">
+        <a class="brand" href="#top" aria-label="WhyThisMovie home">
+          <span class="brand-mark" aria-hidden="true"><span></span></span>
+          <span class="brand-name">Why<span>This</span>Movie</span>
+        </a>
+
+        <nav class="tabs" aria-label="Main navigation" role="tablist">
+          <button class="on" id="nav-rec" type="button" role="tab" aria-selected="true" aria-controls="tab-rec" data-tab="rec">
+            Discover
+          </button>
+          <button id="nav-eval" type="button" role="tab" aria-selected="false" aria-controls="tab-eval" data-tab="eval">
+            Benchmark
+          </button>
+          <button id="nav-how" type="button" role="tab" aria-selected="false" aria-controls="tab-how" data-tab="how">
+            How it works
+          </button>
+        </nav>
+
+        <div class="header-actions">
+          <span class="status-pill" id="lat" role="status" aria-live="polite">Preparing your films…</span>
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch colour theme">
+            Dark theme
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="wrap" id="top">
+      <section id="tab-rec" role="tabpanel" aria-labelledby="nav-rec">
+        <div class="page-intro">
+          <p class="eyebrow">A more personal movie night</p>
+          <h1>Find your next <em>favourite.</em></h1>
+          <p>
+            Tell us what you enjoy. Get thoughtful movie picks, with the reason behind each one.
+          </p>
+        </div>
+
+        <div class="grid">
+          <aside aria-label="Recommendation preferences">
+            <section class="panel database-panel" aria-labelledby="databaseHeading">
+              <div class="panel-heading">
+                <span class="step-number" aria-hidden="true">DB</span>
+                <div>
+                  <h2 id="databaseHeading">Your movie catalogue</h2>
+                  <p class="panel-subtitle">Loaded automatically from the local <code>dataset/</code> directory beside this page.</p>
+                </div>
+              </div>
+              <p class="mut" id="dbStatus" role="status" aria-live="polite">Looking for <code>dataset/*.csv</code>…</p>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <span class="step-number" aria-hidden="true">01</span>
+                <div>
+                  <h2>Start with your taste</h2>
+                  <p class="panel-subtitle">Rate films you already know to shape your recommendations.</p>
+                </div>
+              </div>
+
+              <div id="customBox">
+                <label for="q">Search for a film to rate</label>
+                <input type="text" id="q" placeholder="Try a title you love…" autocomplete="off" />
+                <div class="res hide" id="qres" aria-label="Matching movies"></div>
+                <div class="mine" id="mine" aria-live="polite"></div>
+
+                <div class="inline-actions">
+                  <button class="b sec" id="demo" type="button" data-tip="Add five example ratings to try the app quickly.">
+                    Try sample favourites
+                  </button>
+                  <button class="b ghost" id="clr" type="button">Clear ratings</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <span class="step-number" aria-hidden="true">02</span>
+                <div>
+                  <h2>Fine-tune the mix</h2>
+                  <p class="panel-subtitle" id="mixHelp">Balance shared genres against similar films, directors, cast and release era.</p>
+                </div>
+              </div>
+
+              <div class="mix" data-tip="Genre matching finds films with similar themes. Crowd matching uses patterns in other viewers' ratings.">
+                <span id="mixLeft">Genres</span>
+                <input type="range" id="alpha" min="0" max="100" value="60" aria-label="Balance genre and crowd recommendations" />
+                <span id="mixRight">Crowd</span>
+              </div>
+              <p class="mut" id="alphaTxt">40% genre taste · 60% similar-film details</p>
+            </section>
+
+            <section class="panel">
+              <details>
+                <summary data-tip="The bars summarise your genre profile. Sliders let you tune each genre's influence.">
+                  Personalise genre weights
+                </summary>
+                <p class="panel-subtitle">A little nudge can change the shape of your recommendations.</p>
+                <div id="genres"></div>
+                <button class="b ghost" id="reset" type="button">Reset feedback</button>
+              </details>
+            </section>
+          </aside>
+
+          <div class="recommendations">
+            <div class="content-heading">
+              <div>
+                <p class="panel-kicker">Picked for this profile</p>
+                <h2>Your next five films</h2>
+                <p>Every pick comes with a reason you can inspect.</p>
+              </div>
+              <span class="heading-note">5 considered picks</span>
+            </div>
+
+            <div id="hid" aria-live="polite"></div>
+            <div class="cards" id="cards" aria-live="polite" aria-busy="true">
+              <div class="empty-state">
+                <div class="empty-state-mark" aria-hidden="true">✦</div>
+                <h3>Putting a shortlist together</h3>
+                <p>Loading the film catalogue and learning from the ratings.</p>
+              </div>
+            </div>
+
+            <section class="panel supporting-panel">
+              <p class="panel-kicker">Your starting point</p>
+              <h3>Films behind this taste profile</h3>
+              <div id="fav" class="mut">Your highest-rated films will appear here.</div>
+            </section>
+
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-eval" class="hide" role="tabpanel" aria-labelledby="nav-eval">
+        <section class="panel">
+          <p class="panel-kicker">A reality check</p>
+          <h2 id="benchmarkHeading">Benchmarking needs individual rating histories</h2>
+          <p class="panel-subtitle" id="benchmarkCopy">
+            The current CSV catalogue contains movie metadata and aggregate IMDb scores, not individual users’ ratings. A user-level offline benchmark cannot be calculated from this source alone.
+          </p>
+          <div class="inline-actions">
+            <button class="b" id="run" type="button" disabled>Not available for this dataset</button>
+            <span class="mut" id="evst" role="status" aria-live="polite"></span>
+          </div>
+          <div id="evout"></div>
+        </section>
+      </section>
+
+      <section id="tab-how" class="hide" role="tabpanel" aria-labelledby="nav-how">
+        <section class="panel">
+          <p class="panel-kicker">Behind the picks</p>
+          <h2>How the recommender works</h2>
+          <ul class="l">
+            <li><b>Data:</b> the 13 genre-split CSV files in <code>dataset/</code>, deduplicated by IMDb ID.</li>
+            <li><b>Content-based:</b> your ratings build a taste profile from genre overlap and film attributes.</li>
+            <li><b>Film similarity:</b> genre, director, cast and release era help identify related movies.</li>
+            <li><b>Quality signal:</b> IMDb rating and vote count help distinguish otherwise similar candidates.</li>
+            <li><b>Explanations:</b> each reason is grounded in the ratings and shared genres used by the model, rather than generated free-form text.</li>
+            <li><b>Feedback:</b> “Less like this” hides a film and lowers the weight of its genres. “More like this” raises those genre weights.</li>
+          </ul>
+
+          <h3>Privacy and limitations</h3>
+          <ul class="l">
+            <li>Recommendation calculations run locally in your browser. The app does not upload your ratings or save them between sessions.</li>
+            <li>The CSVs provide catalogue metadata and aggregate IMDb rating/vote counts, but not per-user rating histories, so recommendations are content-based rather than collaborative. The benchmark is unavailable for this source.</li>
+            <li>The app uses <code>posters/MOVIE_INDEX.jpg</code> when a local poster exists. Missing posters use the built-in SVG generator. Movie indexes are zero-based, so the first movie uses <code>posters/0.jpg</code>.</li>
+          </ul>
+
+          <h3>Credits and image sources</h3>
+          <div class="tmdb-credit">
+            <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" aria-label="The Movie Database (TMDB)">
+              <img src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_long_1.svg" alt="The Movie Database (TMDB)" loading="lazy" />
+            </a>
+            <p>This product uses the TMDB API but is not endorsed or certified by TMDB. Movie poster images are supplied by TMDB where available.</p>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">Made for more considered movie nights. Your ratings stay in this browser session.</div>
+    </footer>
+
+    <script src="recommender.js?v=20261022-3"></script>
+    <script src="csv-database.js?v=20261022-3"></script>
+    <script src="app.js?v=20261022-3"></script>
+  </body>
+</html>
