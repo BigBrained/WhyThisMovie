@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#f6f5ef" />
     <title>WhyThisMovie — Movie recommendations, explained</title>
-    <link rel="stylesheet" href="styles.css?v=20261022-3" />
+    <link rel="stylesheet" href="styles.css?v=20261022-4" />
   </head>
 
   <body>
@@ -62,6 +62,32 @@
                 </div>
               </div>
               <p class="mut" id="dbStatus" role="status" aria-live="polite">Looking for <code>dataset/*.csv</code>…</p>
+            </section>
+
+            <section class="panel poster-settings" aria-labelledby="tmdbHeading">
+              <div class="panel-heading">
+                <span class="step-number" aria-hidden="true">TMDB</span>
+                <div>
+                  <h2 id="tmdbHeading">Movie posters</h2>
+                  <p class="panel-subtitle">Use TMDB artwork for the five films currently on screen.</p>
+                </div>
+              </div>
+              <label for="tmdbToken">API Read Access Token</label>
+              <input
+                type="password"
+                id="tmdbToken"
+                placeholder="Paste your TMDB read token"
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+                aria-describedby="tmdbHelp tmdbStatus"
+              />
+              <div class="inline-actions">
+                <button class="b" id="tmdbApply" type="button">Load TMDB posters</button>
+                <button class="b ghost" id="tmdbClear" type="button">Clear token</button>
+              </div>
+              <p class="panel-subtitle" id="tmdbHelp">The token stays in this tab’s session and is sent directly to TMDB. It is not embedded in the project files.</p>
+              <p class="mut" id="tmdbStatus" role="status" aria-live="polite">Local JPG and generated SVG posters are being used.</p>
             </section>
 
             <section class="panel">
@@ -178,7 +204,7 @@
           <ul class="l">
             <li>Recommendation calculations run locally in your browser. The app does not upload your ratings or save them between sessions.</li>
             <li>The CSVs provide catalogue metadata and aggregate IMDb rating/vote counts, but not per-user rating histories, so recommendations are content-based rather than collaborative. The benchmark is unavailable for this source.</li>
-            <li>The app uses <code>posters/MOVIE_INDEX.jpg</code> when a local poster exists. Missing posters use the built-in SVG generator. Movie indexes are zero-based, so the first movie uses <code>posters/0.jpg</code>.</li>
+            <li>The app uses <code>posters/MOVIE_INDEX.jpg</code> when available. If you enter a TMDB API Read Access Token, the app looks up posters for the currently displayed films by IMDb ID. Unavailable TMDB posters fall back to local JPGs and then the built-in SVG generator.</li>
           </ul>
 
           <h3>Credits and image sources</h3>
@@ -196,8 +222,8 @@
       <div class="wrap">Made for more considered movie nights. Your ratings stay in this browser session.</div>
     </footer>
 
-    <script src="recommender.js?v=20261022-3"></script>
-    <script src="csv-database.js?v=20261022-3"></script>
-    <script src="app.js?v=20261022-3"></script>
+    <script src="recommender.js?v=20261022-4"></script>
+    <script src="csv-database.js?v=20261022-4"></script>
+    <script src="app.js?v=20261022-4"></script>
   </body>
 </html>
