@@ -1,42 +1,66 @@
 /*
- * WhyThisMovie interface code. The CSV catalogue is loaded automatically from dataset/.
- * Recommendation calculations live in recommender.js; CSV parsing lives in csv-database.js.
+ * WhyThisMovie interface code.
+ * Loads the catalogue from dataset/ on first visit and caches it
+ * in IndexedDB for subsequent visits.
+ *
+ * Requires:
+ *   - recommender.js
+ *   - csv-database.js
  */
+
 (function () {
   "use strict";
 
   const { recommendMetadata } = window.MovieRecommender;
+
   const CSV_GENRE_FILES = [
-    "action", "adventure", "crime", "family", "fantasy", "film-noir",
-    "history", "horror", "mystery", "scifi", "sports", "thriller", "war",
+    "action",
+    "adventure",
+    "crime",
+    "family",
+    "fantasy",
+    "film-noir",
+    "history",
+    "horror",
+    "mystery",
+    "scifi",
+    "sports",
+    "thriller",
+    "war",
   ];
+
+  const CATALOGUE_CACHE_KEY =
+    `catalogue-v2:${new URL("./", document.baseURI).pathname}`;
+
   const $ = (selector) => document.querySelector(selector);
+
   const listen = (selector, eventName, handler) => {
     const element = $(selector);
+
     if (!element) {
-      console.warn(`[WhyThisMovie] Cannot bind ${eventName}: ${selector} is missing from index.html. Check that the HTML and JavaScript files are from the same release.`);
+      console.warn(
+        `[WhyThisMovie] Missing element: ${selector}`
+      );
+
       return null;
     }
+
     element.addEventListener(eventName, handler);
+
     return element;
   };
-  const esc = (value) => String(value).replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[character]);
+
+  const esc = (value) =>
+    String(value).replace(/[&<>"']/g, (character) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    })[character]);
 
   let activeData = { movies: [] };
   let activeGenres = ["unknown"];
-
-  const titleOf = (movieId) => {
-    const movie = activeData.movies[movieId];
-    if (!movie) return "Unknown movie";
-    return movie.year ? `${movie.title} (${movie.year})` : movie.title;
-  };
-  const genresOf = (movieId) => activeData.movies[movieId]?.genres || [];
 
   let customRatings = new Map();
   let mix = 0.6;
@@ -46,47 +70,59 @@
   let explicitTheme = null;
 
   const posterCache = new Map();
-  // TMDB poster paths are independent of a user's token, so cache successful lookups
-  // and confirmed no-poster results for this page session. In-flight requests are shared
-  // when the recommendation list changes quickly (for example, while moving the mix slider).
   const tmdbPosterCache = new Map();
   const tmdbPosterRequests = new Map();
+
   let tmdbAccessToken = "";
   let posterRenderGeneration = 0;
+
   try {
-    tmdbAccessToken = sessionStorage.getItem("whyThisMovieTmdbReadToken") || "";
-  } catch (error) {
-    console.warn("[WhyThisMovie] Session storage is unavailable; the TMDB token will not persist across page refreshes.");
+    tmdbAccessToken =
+      sessionStorage.getItem("whyThisMovieTmdbReadToken") || "";
+  } catch {
+    console.warn("TMDB token storage is unavailable.");
   }
-  if ($("#tmdbToken")) $("#tmdbToken").value = tmdbAccessToken;
+
+  if ($("#tmdbToken")) {
+    $("#tmdbToken").value = tmdbAccessToken;
+  }
 
   const currentRatings = () => [...customRatings];
 
-  function starPicker(rating, attributes) {
-    const buttons = [1, 2, 3, 4, 5].map((value) => {
-      const state = value > rating ? "off" : "";
-      return `
-        <button
-          type="button"
-          class="${state}"
-          ${attributes}
-          data-r="${value}"
-          aria-label="Rate ${value} out of 5 stars"
-          title="${value} star${value === 1 ? "" : "s"}"
-        >★</button>`;
-    });
+  const titleOf = (movieId) => {
+    const movie = activeData.movies[movieId];
 
-    return `<span class="st" role="group" aria-label="Choose a star rating">${buttons.join("")}</span>`;
+    if (!movie) return "Unknown movie";
+
+    return movie.year
+      ? `${movie.title} (${movie.year})`
+      : movie.title;
+  };
+
+  const genresOf = (movieId) =>
+    activeData.movies[movieId]?.genres || [];
+
+  function starPicker(rating, attributes) {
+    return `
+      <span class="st" role="group" aria-label="Choose a star rating">
+        ${[1, 2, 3, 4, 5].map((value) => `
+          <button
+            type="button"
+            class="${value > rating ? "off" : ""}"
+            ${attributes}
+            data-r="${value}"
+            aria-label="Rate ${value} out of 5 stars"
+          >★</button>
+        `).join("")}
+      </span>`;
   }
 
   const genreIcons = {
     Action: "✦",
     Adventure: "⌁",
     Animation: "◈",
-    "Children’s": "❋",
     Comedy: "☼",
     Crime: "⌕",
-    Documentary: "▧",
     Drama: "◉",
     Fantasy: "✧",
     "Film-Noir": "◐",
@@ -97,73 +133,88 @@
     "Sci-Fi": "⌬",
     Thriller: "⚡",
     War: "▥",
-    Western: "⌂",
   };
 
-  const escapeXml = (value) => value.replace(/[&<>]/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-  })[character]);
+  const escapeXml = (value) =>
+    value.replace(/[&<>]/g, (character) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+    })[character]);
 
   function generatedPoster(movieId) {
-    if (posterCache.has(movieId)) return posterCache.get(movieId);
+    if (posterCache.has(movieId)) {
+      return posterCache.get(movieId);
+    }
 
     const fullTitle = titleOf(movieId);
     const plainTitle = fullTitle.replace(/\s*\(\d{4}\)$/, "");
     const firstGenre = genresOf(movieId)[0];
+
     let hue = 0;
 
     for (const character of fullTitle) {
       hue = (hue * 31 + character.charCodeAt(0)) % 360;
     }
 
-    const titleLines = [];
-    let currentLine = "";
+    const lines = [];
+    let line = "";
 
     for (const word of plainTitle.split(" ")) {
-      if (`${currentLine} ${word}`.trim().length > 13 && currentLine) {
-        titleLines.push(currentLine);
-        currentLine = word;
+      if (`${line} ${word}`.trim().length > 13 && line) {
+        lines.push(line);
+        line = word;
       } else {
-        currentLine = `${currentLine} ${word}`.trim();
+        line = `${line} ${word}`.trim();
       }
     }
-    titleLines.push(currentLine);
 
-    const titleMarkup = titleLines.slice(0, 4).map((line, index) => `
-      <text
-        x="42"
-        y="74"
-        dy="${index * 12}"
-        font-size="9.5"
-        font-weight="700"
-        fill="#fff"
-        text-anchor="middle"
-        font-family="Arial, sans-serif"
-      >${escapeXml(line)}</text>`).join("");
+    lines.push(line);
+
+    const titleMarkup = lines.slice(0, 4).map(
+      (text, index) => `
+        <text
+          x="42"
+          y="74"
+          dy="${index * 12}"
+          font-size="9.5"
+          font-weight="700"
+          fill="#fff"
+          text-anchor="middle"
+          font-family="Arial, sans-serif"
+        >${escapeXml(text)}</text>`
+    ).join("");
 
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 84 126">
         <defs>
           <linearGradient id="poster-gradient" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stop-color="hsl(${hue}, 48%, 43%)" />
-            <stop offset="1" stop-color="hsl(${(hue + 50) % 360}, 55%, 19%)" />
+            <stop offset="0" stop-color="hsl(${hue}, 48%, 43%)"/>
+            <stop offset="1" stop-color="hsl(${(hue + 50) % 360}, 55%, 19%)"/>
           </linearGradient>
         </defs>
-        <rect width="84" height="126" fill="url(#poster-gradient)" />
-        <circle cx="42" cy="40" r="21" fill="rgba(255,255,255,0.10)" />
+
+        <rect width="84" height="126" fill="url(#poster-gradient)"/>
+        <circle cx="42" cy="40" r="21" fill="rgba(255,255,255,0.10)"/>
+
         <text x="42" y="51" font-size="30" text-anchor="middle" fill="#fff">
           ${genreIcons[firstGenre] || "▣"}
         </text>
+
         ${titleMarkup}
       </svg>`;
 
-    const imageUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    const imageUrl =
+      `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+
     posterCache.set(movieId, imageUrl);
+
     return imageUrl;
   }
 
+  // --------------------------------------------------
+  // TMDB poster loading
+  // --------------------------------------------------
 
   function normalizeMovieTitle(value) {
     return String(value || "")
@@ -183,10 +234,13 @@
     });
 
     if (!response.ok) {
-      const endpoint = new URL(url).pathname;
-      const error = new Error(`TMDB returned HTTP ${response.status} for ${endpoint}.`);
+      const error = new Error(
+        `TMDB returned HTTP ${response.status} for ${new URL(url).pathname}.`
+      );
+
       error.status = response.status;
-      error.endpoint = endpoint;
+      error.endpoint = new URL(url).pathname;
+
       throw error;
     }
 
@@ -195,71 +249,112 @@
 
   async function requestTmdbPoster(movie, token) {
     const imdbId = String(movie?.id || "").trim();
-    const cacheKey = imdbId || `${normalizeMovieTitle(movie?.title)}|${movie?.year || ""}`;
-    if (tmdbPosterCache.has(cacheKey)) return tmdbPosterCache.get(cacheKey);
+
+    const cacheKey = imdbId ||
+      `${normalizeMovieTitle(movie?.title)}|${movie?.year || ""}`;
+
+    if (tmdbPosterCache.has(cacheKey)) {
+      return tmdbPosterCache.get(cacheKey);
+    }
 
     const requestKey = `${cacheKey}\u0000${token}`;
-    if (tmdbPosterRequests.has(requestKey)) return tmdbPosterRequests.get(requestKey);
+
+    if (tmdbPosterRequests.has(requestKey)) {
+      return tmdbPosterRequests.get(requestKey);
+    }
 
     const request = (async () => {
       let posterPath = null;
 
+      // First try IMDb ID.
       if (/^tt\d+$/i.test(imdbId)) {
-        const findUrl = new URL(`https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}`);
-        findUrl.searchParams.set("external_source", "imdb_id");
-        findUrl.searchParams.set("language", "en-US");
+        const url = new URL(
+          `https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}`
+        );
+
+        url.searchParams.set("external_source", "imdb_id");
+        url.searchParams.set("language", "en-US");
+
         try {
-          const found = await tmdbJSON(findUrl.href, token);
-          posterPath = found.movie_results?.find((result) => result.poster_path)?.poster_path || null;
+          const found = await tmdbJSON(url.href, token);
+
+          posterPath =
+            found.movie_results?.find(
+              (result) => result.poster_path
+            )?.poster_path || null;
         } catch (error) {
-          // TMDB can return 404 for an IMDb ID it cannot resolve. Treat that as
-          // a failed ID lookup, not a fatal poster error: title/year search below
-          // is the intended fallback. Authentication and other API errors remain visible.
-          if (error?.status !== 404) throw error;
+          // A missing IMDb mapping should not prevent title search.
+          if (error?.status !== 404) {
+            throw error;
+          }
         }
       }
 
-      // Some CSV IDs are absent or unmapped. Search by title/year, but only accept an
-      // exact normalized title match to avoid displaying a poster for a different film.
+      // Fall back to exact title and year search.
       if (!posterPath && movie?.title) {
-        const searchUrl = new URL("https://api.themoviedb.org/3/search/movie");
-        searchUrl.searchParams.set("query", movie.title);
-        searchUrl.searchParams.set("language", "en-US");
-        if (movie.year) searchUrl.searchParams.set("year", String(movie.year));
-        const search = await tmdbJSON(searchUrl.href, token);
+        const url = new URL(
+          "https://api.themoviedb.org/3/search/movie"
+        );
+
+        url.searchParams.set("query", movie.title);
+        url.searchParams.set("language", "en-US");
+
+        if (movie.year) {
+          url.searchParams.set("year", String(movie.year));
+        }
+
+        const result = await tmdbJSON(url.href, token);
         const wanted = normalizeMovieTitle(movie.title);
-        const exact = (search.results || []).find((result) => {
-          const resultTitle = normalizeMovieTitle(result.title || result.original_title);
-          const resultYear = Number(String(result.release_date || "").slice(0, 4)) || null;
-          return resultTitle === wanted && (!movie.year || !resultYear || resultYear === Number(movie.year)) && result.poster_path;
+
+        const exact = (result.results || []).find((item) => {
+          const resultTitle = normalizeMovieTitle(
+            item.title || item.original_title
+          );
+
+          const resultYear =
+            Number(String(item.release_date || "").slice(0, 4)) || null;
+
+          return (
+            resultTitle === wanted &&
+            (!movie.year || !resultYear ||
+              resultYear === Number(movie.year)) &&
+            Boolean(item.poster_path)
+          );
         });
+
         posterPath = exact?.poster_path || null;
       }
 
-      const posterUrl = posterPath ? `https://image.tmdb.org/t/p/w500${posterPath}` : null;
+      const posterUrl = posterPath
+        ? `https://image.tmdb.org/t/p/w500${posterPath}`
+        : null;
+
       tmdbPosterCache.set(cacheKey, posterUrl);
+
       return posterUrl;
     })();
 
     tmdbPosterRequests.set(requestKey, request);
+
     try {
       return await request;
     } finally {
-      if (tmdbPosterRequests.get(requestKey) === request) tmdbPosterRequests.delete(requestKey);
+      if (tmdbPosterRequests.get(requestKey) === request) {
+        tmdbPosterRequests.delete(requestKey);
+      }
     }
   }
 
   function configurePosterFallback(image) {
     const movieId = Number(image.dataset.m);
-    image.dataset.tmdbSrc = "";
-    image.dataset.fallbackApplied = "false";
 
-    // Posters are fetched directly from TMDB; no posters/ directory is required.
-    // Generated SVG artwork is the placeholder and the fallback if TMDB has no image.
+    image.dataset.fallbackApplied = "false";
+    image.dataset.tmdbSrc = "";
+
     image.onerror = () => {
       if (image.dataset.fallbackApplied === "true") return;
+
       image.dataset.fallbackApplied = "true";
-      image.dataset.tmdbSrc = "";
       image.src = generatedPoster(movieId);
     };
 
@@ -268,91 +363,155 @@
 
   async function refreshDisplayedPosters() {
     const generation = ++posterRenderGeneration;
-    const images = [...$("#cards").querySelectorAll("img[data-m]")];
+    const cards = $("#cards");
+
+    if (!cards) return;
+
+    const images = [
+      ...cards.querySelectorAll("img[data-m]")
+    ];
+
     images.forEach(configurePosterFallback);
 
     const status = $("#tmdbStatus");
+
     if (!tmdbAccessToken) {
-      if (status) status.textContent = "Enter a TMDB API Read Access Token to fetch real posters. Generated SVG artwork is shown until then.";
+      if (status) {
+        status.textContent =
+          "Enter a TMDB API Read Access Token to load real posters.";
+      }
+
       return;
     }
 
-    if (status) status.textContent = `Looking up posters for ${images.length} displayed films on TMDB…`;
     if (!images.length) {
-      if (status) status.textContent = "Your current shortlist has no films to look up yet. Rate a few films first.";
+      if (status) {
+        status.textContent =
+          "Rate a few films to load posters for your recommendations.";
+      }
+
       return;
     }
 
-    const results = await Promise.allSettled(images.map(async (image) => {
-      const movieId = Number(image.dataset.m);
-      const movie = activeData.movies[movieId];
-      if (!movie) return false;
+    if (status) {
+      status.textContent =
+        `Loading posters for ${images.length} films…`;
+    }
 
-      const posterUrl = await requestTmdbPoster(movie, tmdbAccessToken);
-      if (generation !== posterRenderGeneration || !image.isConnected) return false;
-      if (!posterUrl) return false;
+    const results = await Promise.allSettled(
+      images.map(async (image) => {
+        const movie = activeData.movies[Number(image.dataset.m)];
 
-      image.dataset.tmdbSrc = posterUrl;
-      image.dataset.fallbackApplied = "false";
-      image.src = posterUrl;
-      return true;
-    }));
+        if (!movie) return false;
+
+        const posterUrl = await requestTmdbPoster(
+          movie,
+          tmdbAccessToken
+        );
+
+        if (
+          generation !== posterRenderGeneration ||
+          !image.isConnected ||
+          !posterUrl
+        ) {
+          return false;
+        }
+
+        image.dataset.tmdbSrc = posterUrl;
+        image.dataset.fallbackApplied = "false";
+        image.src = posterUrl;
+
+        return true;
+      })
+    );
 
     if (generation !== posterRenderGeneration) return;
-    const matched = results.filter((result) => result.status === "fulfilled" && result.value).length;
-    const errors = results.filter((result) => result.status === "rejected").map((result) => result.reason);
-    const authError = errors.find((error) => error?.status === 401 || error?.status === 403);
+
+    const matched = results.filter(
+      (result) =>
+        result.status === "fulfilled" && result.value
+    ).length;
+
+    const errors = results.filter(
+      (result) => result.status === "rejected"
+    ).map((result) => result.reason);
+
+    const authError = errors.find(
+      (error) => error?.status === 401 || error?.status === 403
+    );
+
     if (authError) {
-      if (status) status.textContent = `TMDB rejected this token (HTTP ${authError.status}). Check your API Read Access Token. Generated SVG fallback remains active.`;
+      if (status) {
+        status.textContent =
+          `TMDB rejected the token (HTTP ${authError.status}).`;
+      }
     } else if (errors.length) {
-      const first = errors[0];
-      const endpoint = first?.endpoint ? ` at ${first.endpoint}` : "";
-      if (status) status.textContent = `TMDB could not load some posters${first?.status ? ` (HTTP ${first.status}${endpoint})` : ""}. Generated SVG fallback remains active.`;
+      const error = errors[0];
+
+      if (status) {
+        status.textContent =
+          `TMDB poster loading failed${error?.status
+            ? ` (HTTP ${error.status})`
+            : ""}. SVG fallbacks remain available.`;
+      }
     } else if (status) {
-      status.textContent = matched
-        ? `TMDB posters loaded for ${matched} of ${images.length} displayed films. Movies without a match use generated SVG posters.`
-        : "No matching TMDB posters were found for this shortlist. Generated SVG fallback remains active.";
+      status.textContent =
+        `${matched} of ${images.length} posters loaded from TMDB.`;
     }
   }
 
   function applyTmdbToken() {
     const token = $("#tmdbToken")?.value.trim() || "";
+
     if (!token) {
-      if ($("#tmdbStatus")) $("#tmdbStatus").textContent = "Paste your TMDB API Read Access Token first.";
+      if ($("#tmdbStatus")) {
+        $("#tmdbStatus").textContent = "Enter your TMDB token first.";
+      }
+
       return;
     }
 
     tmdbAccessToken = token;
+
     try {
       sessionStorage.setItem("whyThisMovieTmdbReadToken", token);
-    } catch (error) {
-      // The active token still works even when session storage is blocked.
+    } catch {
+      // The token remains usable for this page session.
     }
+
+    tmdbPosterCache.clear();
+
     refreshDisplayedPosters();
   }
 
   function clearTmdbToken() {
     tmdbAccessToken = "";
-    if ($("#tmdbToken")) $("#tmdbToken").value = "";
+
+    if ($("#tmdbToken")) {
+      $("#tmdbToken").value = "";
+    }
+
     try {
       sessionStorage.removeItem("whyThisMovieTmdbReadToken");
-    } catch (error) {
-      // Clearing the in-memory token is still sufficient for this page.
+    } catch {
+      // Clearing the in-memory value is sufficient.
     }
+
     refreshDisplayedPosters();
   }
+
+  // --------------------------------------------------
+  // Genre controls
+  // --------------------------------------------------
 
   function buildGenreControls() {
     $("#genres").innerHTML = activeGenres.map((genre, index) => {
       if (index === 0) return "";
 
       return `
-        <div
-          class="gl"
-          data-tip="${esc(genre)}: the bar shows how much your ratings favour it. Set its influence from ×0 to ×3."
-        >
+        <div class="gl" data-tip="${esc(genre)} influence">
           <span>${esc(genre)}</span>
-          <div class="bar"><i id="pb${index}" style="width: 0%"></i></div>
+          <div class="bar"><i id="pb${index}" style="width:0%"></i></div>
           <span id="pv${index}">×1.0</span>
           <input
             type="range"
@@ -368,7 +527,11 @@
     activeGenres.forEach((genre, index) => {
       if (index === 0) return;
 
-      $(`#ps${index}`).addEventListener("input", (event) => {
+      const slider = $(`#ps${index}`);
+
+      if (!slider) return;
+
+      slider.addEventListener("input", (event) => {
         genreWeights[index] = Number(event.target.value) / 100;
         renderRecommendations();
       });
@@ -376,39 +539,98 @@
   }
 
   function syncGenreControls(profile) {
-    const largestValue = Math.max(1e-9, ...Array.from(profile, (value) => Math.abs(value)));
+    const largestValue = Math.max(
+      1e-9,
+      ...Array.from(profile, (value) => Math.abs(value))
+    );
 
     activeGenres.forEach((genre, index) => {
       if (index === 0) return;
 
-      const profileValue = profile[index] || 0;
-      $(`#pb${index}`).style.width = `${(100 * Math.abs(profileValue)) / largestValue}%`;
-      $(`#pb${index}`).style.background = profileValue < 0 ? "var(--danger)" : "var(--good)";
-      $(`#pv${index}`).textContent = `×${genreWeights[index].toFixed(1)}`;
-
+      const value = profile[index] || 0;
+      const bar = $(`#pb${index}`);
+      const label = $(`#pv${index}`);
       const slider = $(`#ps${index}`);
-      const targetValue = Math.round(genreWeights[index] * 100);
-      if (Number(slider.value) !== targetValue) slider.value = targetValue;
+
+      if (!bar || !label || !slider) return;
+
+      bar.style.width =
+        `${100 * Math.abs(value) / largestValue}%`;
+
+      bar.style.background =
+        value < 0 ? "var(--danger)" : "var(--good)";
+
+      label.textContent = `×${genreWeights[index].toFixed(1)}`;
+
+      const target = Math.round(genreWeights[index] * 100);
+
+      if (Number(slider.value) !== target) {
+        slider.value = target;
+      }
     });
+  }
+
+  // --------------------------------------------------
+  // Ratings and recommendations
+  // --------------------------------------------------
+
+  function drawCustomRatings() {
+    const mine = $("#mine");
+
+    if (!mine) return;
+
+    mine.innerHTML = [...customRatings].map(
+      ([movieId, rating]) => `
+        <div>
+          <span>${esc(titleOf(movieId))}</span>
+
+          ${starPicker(rating, `data-m="${movieId}"`)}
+
+          <button
+            class="chip"
+            type="button"
+            data-del="${movieId}"
+            aria-label="Remove rating"
+          >×</button>
+        </div>`
+    ).join("");
   }
 
   function renderEmptyState() {
     $("#cards").innerHTML = `
       <div class="empty-state">
         <div class="empty-state-mark" aria-hidden="true">✦</div>
+
         <h3>A few favourites go a long way</h3>
-        <p>Rate two or three films you know, or add the sample favourites to start building a personal shortlist.</p>
-        <div class="inline-actions" style="justify-content: center;">
-          <button class="b" type="button" data-empty-action="sample">Try sample favourites</button>
-          <button class="b ghost" type="button" data-empty-action="ratings">Rate a film</button>
+
+        <p>
+          Rate two or three films you know, or add sample favourites
+          to build a personal shortlist.
+        </p>
+
+        <div class="inline-actions" style="justify-content:center">
+          <button class="b" type="button" data-empty-action="sample">
+            Try sample favourites
+          </button>
+
+          <button class="b ghost" type="button" data-empty-action="ratings">
+            Rate a film
+          </button>
         </div>
       </div>`;
 
-    $("#fav").textContent = "Rate a few films to see the favourites that shape your recommendations.";
+    $("#fav").textContent =
+      "Rate a few films to see which favourites shape your recommendations.";
+
     $("#hid").innerHTML = "";
+
     syncGenreControls(new Float32Array(activeGenres.length));
+
     $("#lat").textContent = "Ready when you are";
+
     $("#cards").setAttribute("aria-busy", "false");
+
+    refreshDisplayedPosters();
   }
 
   function renderRecommendations() {
@@ -417,72 +639,108 @@
     const startTime = performance.now();
     const ratings = currentRatings();
 
-    $("#alphaTxt").textContent = `${Math.round((1 - mix) * 100)}% genre profile · ${Math.round(mix * 100)}% similar-film details`;
+    $("#alphaTxt").textContent =
+      `${Math.round((1 - mix) * 100)}% genre profile · ` +
+      `${Math.round(mix * 100)}% similar-film details`;
 
     if (!ratings.length) {
       renderEmptyState();
       return;
     }
 
-    const output = recommendMetadata(activeData.movies, ratings, {
-      alpha: mix,
-      genreNames: activeGenres,
-      mult: genreWeights,
-      hidden: hiddenMovies,
-      explain: true,
-      n: 5,
-    });
+    const output = recommendMetadata(
+      activeData.movies,
+      ratings,
+      {
+        alpha: mix,
+        genreNames: activeGenres,
+        mult: genreWeights,
+        hidden: hiddenMovies,
+        explain: true,
+        n: 5,
+      }
+    );
 
     $("#cards").innerHTML = output.res.map((item, index) => {
       const anchor = item.anchor;
-      let explanation = "A strong fit from your genre profile, film details, IMDb rating and vote count.";
+
+      let explanation =
+        "A strong fit from your genre profile, film details, IMDb rating and vote count.";
 
       if (anchor) {
         const sharedGenres = anchor.shared.length
           ? `both share <b>${anchor.shared.map(esc).join(", ")}</b> themes`
-          : "have related details such as director, cast, or release era";
+          : "have related directors, cast, or release eras";
 
-        explanation = `Recommended because you rated <b>${esc(titleOf(anchor.j))}</b> ${anchor.r} star${anchor.r > 1 ? "s" : ""} and ${sharedGenres}.`;
+        explanation =
+          `Recommended because you rated <b>${esc(titleOf(anchor.j))}</b> ` +
+          `${anchor.r} star${anchor.r > 1 ? "s" : ""} and ${sharedGenres}.`;
 
         if (anchor.cs > 0.05) {
-          explanation += ` Film-detail similarity: ${(anchor.cs * 100).toFixed(0)}%.`;
+          explanation +=
+            ` Film-detail similarity: ${(anchor.cs * 100).toFixed(0)}%.`;
         }
       }
 
-      const genreTags = genresOf(item.m).map((genre) => (
-        `<span>${esc(genre)}</span>`
-      )).join("");
-      const metadata = activeData.movies[item.m];
-      const metadataFacts = metadata ? [
-        metadata.certificate,
-        metadata.runtime,
-        Number.isFinite(metadata.rating) ? `IMDb ${metadata.rating.toFixed(1)}/10` : "",
-        metadata.votes ? `${Number(metadata.votes).toLocaleString()} votes` : "",
-        metadata.director ? `Dir. ${metadata.director}` : "",
-      ].filter(Boolean) : [];
-      const metadataMarkup = metadata ? `
-        <p class="movie-meta">${metadataFacts.map(esc).join(" · ")}</p>
-        ${metadata.description ? `<p class="movie-description">${esc(metadata.description)}</p>` : ""}
-        ${metadata.stars?.length ? `<p class="movie-cast"><b>Starring:</b> ${esc(metadata.stars.slice(0, 4).join(", "))}</p>` : ""}` : "";
+      const genreTags = genresOf(item.m).map(
+        (genre) => `<span>${esc(genre)}</span>`
+      ).join("");
+
+      const movie = activeData.movies[item.m];
+
+      const facts = [
+        movie.certificate,
+        movie.runtime,
+        Number.isFinite(movie.rating)
+          ? `IMDb ${movie.rating.toFixed(1)}/10`
+          : "",
+        movie.votes
+          ? `${Number(movie.votes).toLocaleString()} votes`
+          : "",
+        movie.director
+          ? `Dir. ${movie.director}`
+          : "",
+      ].filter(Boolean);
+
+      const metadataMarkup = `
+        <p class="movie-meta">${facts.map(esc).join(" · ")}</p>
+
+        ${movie.description
+          ? `<p class="movie-description">${esc(movie.description)}</p>`
+          : ""}
+
+        ${movie.stars?.length
+          ? `<p class="movie-cast"><b>Starring:</b> ${esc(movie.stars.slice(0, 4).join(", "))}</p>`
+          : ""}`;
 
       const contributionBars = item.weights.map((weight) => `
         <div class="w">
           <span>${esc(activeGenres[weight.g])}</span>
-          <span class="t"><i style="width: ${weight.pct}%"></i></span>
+          <span class="t"><i style="width:${weight.pct}%"></i></span>
           <b>${weight.pct}%</b>
-        </div>`).join("");
+        </div>`
+      ).join("");
 
       return `
-        <article class="card" style="animation-delay: ${index * 35}ms">
+        <article class="card" style="animation-delay:${index * 35}ms">
           <div class="poster">
-            <img src="${generatedPoster(item.m)}" alt="Poster for ${esc(titleOf(item.m))}" data-m="${item.m}" loading="lazy" decoding="async" />
+            <img
+              src="${generatedPoster(item.m)}"
+              alt="Poster for ${esc(titleOf(item.m))}"
+              data-m="${item.m}"
+              loading="lazy"
+              decoding="async"
+            />
             <b aria-label="Recommendation ${index + 1}">${index + 1}</b>
           </div>
 
           <div class="body">
             <h4>${esc(titleOf(item.m))}</h4>
+
             <div class="tags" aria-label="Genres">${genreTags}</div>
+
             ${metadataMarkup}
+
             <p class="why">${explanation}</p>
 
             <div class="acts">
@@ -491,22 +749,21 @@
                 type="button"
                 data-act="less"
                 data-m="${item.m}"
-                data-tip="Hide this film and reduce the influence of its genres."
               >Less like this</button>
+
               <button
                 class="b ghost"
                 type="button"
                 data-act="more"
                 data-m="${item.m}"
-                data-tip="Give this film's genres more influence in future picks."
               >More like this</button>
             </div>
 
             <details class="detail">
-              <summary data-tip="See the genre contribution and a breakdown of the recommendation score.">
-                Why this score?
-              </summary>
+              <summary>Why this score?</summary>
+
               ${contributionBars}
+
               <div class="comp">
                 <span>Score <b>${item.score.toFixed(2)}</b></span>
                 <span>Genre match <b>${item.content.toFixed(2)}</b></span>
@@ -519,210 +776,508 @@
     }).join("");
 
     $("#cards").setAttribute("aria-busy", "false");
-    // Fetch posters directly from TMDB when a token is available.
-    // Missing/failed TMDB images use the generated SVG artwork; no local poster files are required.
+
     refreshDisplayedPosters();
 
     $("#hid").innerHTML = hiddenMovies.size
       ? `
-        <div class="panel" style="padding: 14px 16px; margin-bottom: 15px;">
+        <div class="panel">
           <p class="panel-kicker">Hidden from your picks</p>
+
           ${[...hiddenMovies].map((movieId) => `
             <span class="chip">
               ${esc(titleOf(movieId))}
-              <button type="button" data-act="unhide" data-m="${movieId}" aria-label="Restore ${esc(titleOf(movieId))}" title="Restore this film">×</button>
-            </span>`).join("")}
+
+              <button
+                type="button"
+                data-act="unhide"
+                data-m="${movieId}"
+                aria-label="Restore ${esc(titleOf(movieId))}"
+              >×</button>
+            </span>`
+          ).join("")}
         </div>`
       : "";
 
     $("#fav").innerHTML = ratings
       .slice()
-      .sort((left, right) => right[1] - left[1])
+      .sort((a, b) => b[1] - a[1])
       .slice(0, 6)
       .map(([movieId, rating]) => `
         <div>
-          <span aria-label="${rating} out of 5 stars">${"★".repeat(rating)}</span>
+          <span>${"★".repeat(rating)}</span>
           <span>${esc(titleOf(movieId))}</span>
-        </div>`)
-      .join("");
+        </div>`
+      ).join("");
 
     syncGenreControls(output.profile);
-    $("#lat").textContent = `Ranked ${activeData.movies.length.toLocaleString()} films · ${(performance.now() - startTime).toFixed(1)} ms`;
-  }
 
-  function drawCustomRatings() {
-    $("#mine").innerHTML = [...customRatings].map(([movieId, rating]) => `
-      <div>
-        <span>${esc(titleOf(movieId))}</span>
-        ${starPicker(rating, `data-m="${movieId}"`)}
-        <button class="chip" type="button" data-del="${movieId}" aria-label="Remove ${esc(titleOf(movieId))}" title="Remove rating">×</button>
-      </div>`).join("");
+    $("#lat").textContent =
+      `Ranked ${activeData.movies.length.toLocaleString()} films · ` +
+      `${(performance.now() - startTime).toFixed(1)} ms`;
   }
 
   function addSampleRatings() {
-    const wantedGenres = ["Action", "Comedy", "Drama", "Sci-Fi", "Thriller", "Fantasy", "Crime"];
+    const wantedGenres = [
+      "Action", "Comedy", "Drama", "Sci-Fi",
+      "Thriller", "Fantasy", "Crime",
+    ];
+
     const selected = new Set();
-    const candidates = activeData.movies.map((movie, movieId) => ({ movie, movieId }))
-      .filter(({ movie }) => Number.isFinite(movie.rating) && movie.rating > 0)
-      .sort((left, right) => {
-        const leftVotes = Math.log1p(left.movie.votes || 0);
-        const rightVotes = Math.log1p(right.movie.votes || 0);
-        return ((right.movie.rating || 0) + rightVotes * 0.12) - ((left.movie.rating || 0) + leftVotes * 0.12);
-      });
+
+    const candidates = activeData.movies
+      .map((movie, movieId) => ({ movie, movieId }))
+      .filter(({ movie }) =>
+        Number.isFinite(movie.rating) && movie.rating > 0
+      )
+      .sort((a, b) =>
+        (b.movie.rating + Math.log1p(b.movie.votes || 0) * 0.12) -
+        (a.movie.rating + Math.log1p(a.movie.votes || 0) * 0.12)
+      );
 
     for (const genre of wantedGenres) {
-      const match = candidates.find(({ movieId, movie }) => !selected.has(movieId) && movie.genres.includes(genre));
+      const match = candidates.find(({ movieId, movie }) =>
+        !selected.has(movieId) && movie.genres.includes(genre)
+      );
+
       if (match) {
         selected.add(match.movieId);
-        customRatings.set(match.movieId, match.movie.rating >= 7.8 ? 5 : 4);
-        if (selected.size >= 5) break;
+        customRatings.set(
+          match.movieId,
+          match.movie.rating >= 7.8 ? 5 : 4
+        );
       }
+
+      if (selected.size >= 5) break;
     }
+
     for (const { movieId, movie } of candidates) {
       if (selected.size >= 5) break;
       if (selected.has(movieId)) continue;
+
       selected.add(movieId);
-      customRatings.set(movieId, movie.rating >= 7.8 ? 5 : 4);
+
+      customRatings.set(
+        movieId,
+        movie.rating >= 7.8 ? 5 : 4
+      );
     }
 
     drawCustomRatings();
     renderRecommendations();
   }
 
+  // --------------------------------------------------
+  // Navigation and theme
+  // --------------------------------------------------
+
   function switchTab(tabName) {
-    document.querySelectorAll(".tabs button[data-tab]").forEach((button) => {
-      const selected = button.dataset.tab === tabName;
-      button.classList.toggle("on", selected);
-      button.setAttribute("aria-selected", String(selected));
-      button.tabIndex = selected ? 0 : -1;
-    });
+    document.querySelectorAll(".tabs button[data-tab]").forEach(
+      (button) => {
+        const selected = button.dataset.tab === tabName;
+
+        button.classList.toggle("on", selected);
+        button.setAttribute("aria-selected", String(selected));
+        button.tabIndex = selected ? 0 : -1;
+      }
+    );
 
     ["rec", "eval", "how"].forEach((name) => {
-      $(`#tab-${name}`).classList.toggle("hide", name !== tabName);
+      const section = $(`#tab-${name}`);
+
+      if (section) {
+        section.classList.toggle("hide", name !== tabName);
+      }
     });
   }
 
   function updateThemeLabel() {
     const effectiveTheme = explicitTheme || (
-      window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+      window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light"
     );
-    $("#themeToggle").textContent = effectiveTheme === "dark" ? "Light theme" : "Dark theme";
+
+    if ($("#themeToggle")) {
+      $("#themeToggle").textContent =
+        effectiveTheme === "dark" ? "Light theme" : "Dark theme";
+    }
   }
 
   function switchTheme() {
     const currentTheme = explicitTheme || (
-      window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+      window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light"
     );
+
     explicitTheme = currentTheme === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = explicitTheme;
+
     updateThemeLabel();
   }
 
   function updateMixCopy() {
     $("#mixLeft").textContent = "Genre taste";
     $("#mixRight").textContent = "Similar films";
-    $("#mixHelp").textContent = "Balance shared genres against similarities in director, cast and release era. IMDb ratings and votes help break ties.";
-    $("#alpha").setAttribute("aria-label", "Balance genre profile and similar-film details");
+
+    $("#mixHelp").textContent =
+      "Balance shared genres against similarities in director, cast and release era. IMDb ratings and votes help break ties.";
+
+    $("#alpha").setAttribute(
+      "aria-label",
+      "Balance genre profile and similar-film details"
+    );
   }
 
-  function applyMetadataDatabase(database, importedBy = "dataset/") {
+  // --------------------------------------------------
+  // Loading screen
+  // --------------------------------------------------
+
+  function setLoadingScreen(
+    title,
+    message,
+    detail = "",
+    hasError = false
+  ) {
+    const loader = $("#appLoader");
+
+    if (!loader) return;
+
+    loader.classList.remove("is-done");
+    loader.classList.toggle("has-error", hasError);
+    loader.setAttribute("aria-hidden", "false");
+
+    $("#loaderTitle").textContent = title;
+    $("#loaderMessage").textContent = message;
+
+    const detailNode = $("#loaderDetail");
+
+    detailNode.textContent = detail;
+    detailNode.hidden = !detail;
+
+    $("#loaderRetry").hidden = !hasError;
+  }
+
+  function finishLoadingScreen() {
+    const loader = $("#appLoader");
+
+    if (!loader) return;
+
+    loader.classList.remove("has-error");
+    loader.classList.add("is-done");
+    loader.setAttribute("aria-hidden", "true");
+  }
+
+  function applyMetadataDatabase(
+    database,
+    statusMessage = "loaded from this device"
+  ) {
     activeData = { movies: database.movies };
-    activeGenres = ["unknown", ...database.genres.filter((genre) => genre.toLowerCase() !== "unknown")];
+
+    activeGenres = [
+      "unknown",
+      ...database.genres.filter(
+        (genre) => genre.toLowerCase() !== "unknown"
+      ),
+    ];
+
     ready = true;
     customRatings.clear();
     hiddenMovies.clear();
+
     genreWeights = new Float32Array(activeGenres.length).fill(1);
     mix = Number($("#alpha").value) / 100;
 
     $("#run").disabled = true;
-    $("#benchmarkHeading").textContent = "Benchmarking needs individual rating histories";
-    $("#benchmarkCopy").textContent = "These CSVs provide movie details, aggregate IMDb ratings and votes, but no per-user rating history. The app therefore cannot run the same held-out user-rating test on this source.";
-    $("#evst").textContent = "Not available for metadata-only CSVs.";
-    $("#dbStatus").textContent = `Loaded ${database.movies.length.toLocaleString()} unique movies from ${database.sourceFiles.length} CSV files (${importedBy}).`;
+
+    $("#benchmarkHeading").textContent =
+      "Benchmarking needs individual rating histories";
+
+    $("#benchmarkCopy").textContent =
+      "These CSVs provide aggregate IMDb ratings and votes, but no per-user rating history.";
+
+    $("#evst").textContent =
+      "Not available for metadata-only CSVs.";
+
+    $("#dbStatus").textContent =
+      `${database.movies.length.toLocaleString()} unique movies · ${statusMessage}.`;
+
     $("#q").disabled = false;
     $("#demo").disabled = false;
     $("#clr").disabled = false;
-    $("#lat").textContent = `IMDb catalogue · ${database.movies.length.toLocaleString()} movies`;
+    $("#refreshCatalogue").disabled = false;
+
+    $("#lat").textContent =
+      `${database.movies.length.toLocaleString()} movies ready`;
+
     updateMixCopy();
     buildGenreControls();
     drawCustomRatings();
     renderRecommendations();
   }
 
-  function showDatasetUnavailable(message) {
+  function showCatalogueError(message, detail = "") {
     ready = false;
     activeData = { movies: [] };
-    $("#dbStatus").textContent = message;
-    $("#lat").textContent = "Dataset not loaded";
-    $("#cards").innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state-mark" aria-hidden="true">▤</div>
-        <h3>Your dataset is not loaded yet</h3>
-        <p>Put the 13 genre CSV files in <code>dataset/</code> beside <code>index.html</code>, then start the local server using the instructions in <code>README.md</code>.</p>
-      </div>`;
-    $("#cards").setAttribute("aria-busy", "false");
-    $("#fav").textContent = "Your rated films will appear here once the catalogue is loaded.";
+
+    $("#dbStatus").textContent =
+      "Catalogue could not be opened. See details above.";
+
+    $("#lat").textContent = "Catalogue unavailable";
+
     $("#run").disabled = true;
     $("#q").disabled = true;
     $("#demo").disabled = true;
     $("#clr").disabled = true;
+    $("#refreshCatalogue").disabled = true;
+
+    setLoadingScreen(
+      "We couldn’t open your movie catalogue",
+      message,
+      detail,
+      true
+    );
   }
 
-  async function tryLoadLocalDataset() {
-    // Browsers block fetch() from file:// pages. Serve the project locally instead;
-    // the app always reads its CSVs from ./dataset and never asks for a folder.
-    if (!/^https?:$/.test(window.location.protocol)) {
-      showDatasetUnavailable("Start the local server to load dataset/*.csv automatically. From this project folder, run: python -m http.server 8000, then open http://localhost:8000.");
+  // --------------------------------------------------
+  // IndexedDB catalogue loading
+  // --------------------------------------------------
+
+  let catalogueLoading = false;
+
+  async function tryLoadLocalDataset(forceRefresh = false) {
+    if (catalogueLoading) return;
+
+    catalogueLoading = true;
+
+    const refreshButton = $("#refreshCatalogue");
+
+    if (refreshButton) {
+      refreshButton.disabled = true;
+    }
+
+    $("#q").disabled = true;
+    $("#demo").disabled = true;
+    $("#clr").disabled = true;
+
+    setLoadingScreen(
+      forceRefresh ? "Refreshing your catalogue" : "Getting your films ready",
+      forceRefresh
+        ? "Downloading the latest CSV files. Your saved catalogue remains available if this refresh fails."
+        : "Checking this device for your saved catalogue."
+    );
+
+    let cachedDatabase = null;
+
+    try {
+      cachedDatabase = await window.MovieDatabase.getCachedDatabase(
+        CATALOGUE_CACHE_KEY
+      );
+    } catch (error) {
+      console.warn(
+        "Could not read the local catalogue cache.",
+        error
+      );
+    }
+
+    if (
+      cachedDatabase &&
+      !forceRefresh &&
+      Array.isArray(cachedDatabase.movies) &&
+      cachedDatabase.movies.length
+    ) {
+      applyMetadataDatabase(
+        cachedDatabase,
+        "opened from this device’s saved copy"
+      );
+
+      finishLoadingScreen();
+
+      catalogueLoading = false;
+
+      if (refreshButton) {
+        refreshButton.disabled = false;
+      }
+
       return;
     }
 
-    $("#dbStatus").textContent = "Loading CSV files from dataset/…";
+    if (!/^https?:$/.test(window.location.protocol)) {
+      if (cachedDatabase?.movies?.length) {
+        applyMetadataDatabase(
+          cachedDatabase,
+          "opened from this device’s saved copy"
+        );
+
+        finishLoadingScreen();
+      } else {
+        showCatalogueError(
+          "Open this site through GitHub Pages or a local HTTP server to download the catalogue.",
+          "Browsers cannot fetch dataset/*.csv directly from a file:// page."
+        );
+      }
+
+      catalogueLoading = false;
+
+      if (refreshButton) {
+        refreshButton.disabled = !ready;
+      }
+
+      return;
+    }
+
+    setLoadingScreen(
+      forceRefresh
+        ? "Refreshing your catalogue"
+        : "Preparing your movie catalogue",
+      forceRefresh
+        ? "Downloading the latest CSV files."
+        : "First visit: downloading the catalogue and saving it on this device. Later visits will use the saved copy."
+    );
+
     try {
-      const files = await Promise.all(CSV_GENRE_FILES.map(async (genre) => {
-        const path = `dataset/${genre}.csv`;
-        const response = await fetch(path, { cache: "no-store" });
-        if (!response.ok) throw new Error(`${path} not found (HTTP ${response.status})`);
-        return new File([await response.text()], `${genre}.csv`, { type: "text/csv" });
-      }));
+      let completedFiles = 0;
+
+      const files = await Promise.all(
+        CSV_GENRE_FILES.map(async (genre) => {
+          const url = new URL(
+            `./dataset/${genre}.csv`,
+            document.baseURI
+          );
+
+          const response = await fetch(url.href, {
+            cache: forceRefresh ? "reload" : "default",
+          });
+
+          if (!response.ok) {
+            throw new Error(
+              `${url.pathname} returned HTTP ${response.status}`
+            );
+          }
+
+          const blob = await response.blob();
+
+          completedFiles += 1;
+
+          setLoadingScreen(
+            forceRefresh
+              ? "Refreshing your catalogue"
+              : "Preparing your movie catalogue",
+            `Downloading catalogue files (${completedFiles} of ${CSV_GENRE_FILES.length}).`
+          );
+
+          return new File(
+            [blob],
+            `${genre}.csv`,
+            { type: "text/csv" }
+          );
+        })
+      );
+
+      setLoadingScreen(
+        "Organising your films",
+        "Combining CSV files and removing duplicate IMDb IDs."
+      );
+
       const database = await window.MovieDatabase.fromFiles(files);
-      applyMetadataDatabase(database, "automatic dataset/ load");
+
+      let savedLocally = false;
+
+      setLoadingScreen(
+        "Saving your catalogue",
+        "Keeping a copy on this device for faster future visits."
+      );
+
+      try {
+        await window.MovieDatabase.saveCachedDatabase(
+          CATALOGUE_CACHE_KEY,
+          database
+        );
+
+        savedLocally = true;
+
+        try {
+          if (navigator.storage?.persist) {
+            await navigator.storage.persist();
+          }
+        } catch {
+          // Persistent-storage permission is optional.
+        }
+      } catch (error) {
+        console.warn(
+          "The catalogue loaded, but could not be saved locally.",
+          error
+        );
+      }
+
+      applyMetadataDatabase(
+        database,
+        savedLocally
+          ? "saved on this device for faster future visits"
+          : "loaded for this visit; browser storage was unavailable"
+      );
+
+      finishLoadingScreen();
     } catch (error) {
-      showDatasetUnavailable(`Could not load dataset/*.csv: ${error.message || error}. Check that all 13 CSV files are directly inside the project's dataset/ folder.`);
+      if (cachedDatabase?.movies?.length) {
+        applyMetadataDatabase(
+          cachedDatabase,
+          "using this device’s saved copy; refresh failed"
+        );
+
+        finishLoadingScreen();
+      } else {
+        showCatalogueError(
+          "Check that all 13 CSV files are published inside the site's dataset/ folder.",
+          error?.message || String(error)
+        );
+      }
+    } finally {
+      catalogueLoading = false;
+
+      if (refreshButton) {
+        refreshButton.disabled = !ready;
+      }
     }
   }
 
-  // Keep the interface resilient if index.html and app.js were copied from
-  // different project revisions. The ratings mount is not present in a few
-  // older HTML copies, so create it beside the rating actions when necessary.
+  // --------------------------------------------------
+  // Event handlers
+  // --------------------------------------------------
+
   if (!$("#mine")) {
     const ratingsMount = document.createElement("div");
+
     ratingsMount.id = "mine";
     ratingsMount.className = "mine";
-    ratingsMount.setAttribute("aria-live", "polite");
 
     const customBox = $("#customBox");
     const actions = $("#demo")?.parentElement;
 
     if (customBox) {
-      if (actions && actions.parentElement === customBox) {
+      if (actions?.parentElement === customBox) {
         customBox.insertBefore(ratingsMount, actions);
       } else {
         customBox.append(ratingsMount);
       }
-    } else {
-      console.error("[WhyThisMovie] Missing #customBox in index.html. Ensure index.html and app.js are from the same project version.");
     }
   }
 
-  // Live ratings and search
   listen("#mine", "click", (event) => {
     const starButton = event.target.closest("button[data-r]");
     const removeButton = event.target.closest("button[data-del]");
 
     if (starButton) {
-      customRatings.set(Number(starButton.dataset.m), Number(starButton.dataset.r));
+      customRatings.set(
+        Number(starButton.dataset.m),
+        Number(starButton.dataset.r)
+      );
     }
-    if (removeButton) customRatings.delete(Number(removeButton.dataset.del));
+
+    if (removeButton) {
+      customRatings.delete(Number(removeButton.dataset.del));
+    }
 
     if (starButton || removeButton) {
       drawCustomRatings();
@@ -741,44 +1296,60 @@
     }
 
     const matches = [];
-    for (let movieId = 0; movieId < activeData.movies.length && matches.length < 8; movieId += 1) {
-      if (titleOf(movieId).toLowerCase().includes(query) && !customRatings.has(movieId)) {
+
+    for (
+      let movieId = 0;
+      movieId < activeData.movies.length && matches.length < 8;
+      movieId += 1
+    ) {
+      if (
+        titleOf(movieId).toLowerCase().includes(query) &&
+        !customRatings.has(movieId)
+      ) {
         matches.push(movieId);
       }
     }
 
     results.classList.remove("hide");
+
     results.innerHTML = matches.length
       ? matches.map((movieId) => `
           <div>
             <span>${esc(titleOf(movieId))}</span>
             ${starPicker(0, `data-m="${movieId}"`)}
-          </div>`).join("")
+          </div>
+        `).join("")
       : '<div class="mut">No matching films. Try another title.</div>';
   });
 
   listen("#qres", "click", (event) => {
-    const starButton = event.target.closest("button[data-r]");
-    if (!starButton) return;
+    const button = event.target.closest("button[data-r]");
 
-    customRatings.set(Number(starButton.dataset.m), Number(starButton.dataset.r));
+    if (!button) return;
+
+    customRatings.set(
+      Number(button.dataset.m),
+      Number(button.dataset.r)
+    );
+
     $("#q").value = "";
     $("#qres").classList.add("hide");
     $("#qres").innerHTML = "";
+
     drawCustomRatings();
     renderRecommendations();
   });
 
   listen("#demo", "click", addSampleRatings);
+
   listen("#clr", "click", () => {
     customRatings.clear();
     drawCustomRatings();
     renderRecommendations();
   });
 
-  // Recommendation feedback
   listen("#cards", "click", (event) => {
-    const actionButton = event.target.closest("button[data-act]");
+    const button = event.target.closest("button[data-act]");
     const emptyAction = event.target.closest("button[data-empty-action]");
 
     if (emptyAction) {
@@ -787,29 +1358,42 @@
       } else {
         $("#q").focus();
       }
+
       return;
     }
 
-    if (!actionButton) return;
+    if (!button) return;
 
-    const movieId = Number(actionButton.dataset.m);
-    const relatedGenres = genresOf(movieId);
+    const movieId = Number(button.dataset.m);
 
-    relatedGenres.forEach((genre) => {
-      const genreIndex = activeGenres.indexOf(genre);
-      const factor = actionButton.dataset.act === "less" ? 0.6 : 1.4;
-      genreWeights[genreIndex] = Math.min(3, Math.max(0.1, genreWeights[genreIndex] * factor));
+    genresOf(movieId).forEach((genre) => {
+      const index = activeGenres.indexOf(genre);
+
+      if (index < 0) return;
+
+      const factor = button.dataset.act === "less" ? 0.6 : 1.4;
+
+      genreWeights[index] = Math.min(
+        3,
+        Math.max(0.1, genreWeights[index] * factor)
+      );
     });
 
-    if (actionButton.dataset.act === "less") hiddenMovies.add(movieId);
+    if (button.dataset.act === "less") {
+      hiddenMovies.add(movieId);
+    }
+
     renderRecommendations();
   });
 
   listen("#hid", "click", (event) => {
-    const restoreButton = event.target.closest('button[data-act="unhide"]');
-    if (!restoreButton) return;
+    const button = event.target.closest(
+      'button[data-act="unhide"]'
+    );
 
-    hiddenMovies.delete(Number(restoreButton.dataset.m));
+    if (!button) return;
+
+    hiddenMovies.delete(Number(button.dataset.m));
     renderRecommendations();
   });
 
@@ -824,23 +1408,41 @@
     renderRecommendations();
   });
 
-  // Navigation, theme, and benchmark
-  document.querySelectorAll(".tabs button[data-tab]").forEach((button) => {
-    button.addEventListener("click", () => switchTab(button.dataset.tab));
-  });
+  document.querySelectorAll(".tabs button[data-tab]").forEach(
+    (button) => {
+      button.addEventListener("click", () => {
+        switchTab(button.dataset.tab);
+      });
+    }
+  );
+
   listen("#themeToggle", "click", switchTheme);
   listen("#tmdbApply", "click", applyTmdbToken);
   listen("#tmdbClear", "click", clearTmdbToken);
+
+  listen("#loaderRetry", "click", () => {
+    tryLoadLocalDataset(false);
+  });
+
+  listen("#refreshCatalogue", "click", () => {
+    tryLoadLocalDataset(true);
+  });
+
+  // Initial state.
+  $("#run").disabled = true;
+  $("#refreshCatalogue").disabled = true;
+
+  $("#benchmarkHeading").textContent =
+    "Benchmarking needs individual rating histories";
+
+  $("#benchmarkCopy").textContent =
+    "The dataset contains aggregate IMDb scores and votes, not per-user ratings.";
+
+  $("#evst").textContent =
+    "Unavailable for this dataset.";
+
+  updateMixCopy();
   updateThemeLabel();
 
-  // Always use the project's dataset/ directory. There is no folder picker or bundled catalogue.
-  window.setTimeout(() => {
-    $("#run").disabled = true;
-    $("#benchmarkHeading").textContent = "Benchmarking needs individual rating histories";
-    $("#benchmarkCopy").textContent = "The dataset has IMDb aggregate scores and vote counts, not the user-by-user ratings required for a valid 80/20 benchmark.";
-    $("#evst").textContent = "Unavailable for this dataset.";
-    updateMixCopy();
-    showDatasetUnavailable("Looking for dataset/*.csv. The CSV files must be inside the project's dataset/ directory; start the local server to load them.");
-    tryLoadLocalDataset();
-  }, 0);
+  tryLoadLocalDataset(false);
 })();
