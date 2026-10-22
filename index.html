@@ -87,7 +87,7 @@
                 <button class="b ghost" id="tmdbClear" type="button">Clear token</button>
               </div>
               <p class="panel-subtitle" id="tmdbHelp">The token stays in this tab’s session and is sent directly to TMDB. It is not embedded in the project files.</p>
-              <p class="mut" id="tmdbStatus" role="status" aria-live="polite">Local JPG and generated SVG posters are being used.</p>
+              <p class="mut" id="tmdbStatus" role="status" aria-live="polite">Enter a TMDB Read Access Token to fetch real posters. Generated SVG artwork is shown until then.</p>
             </section>
 
             <section class="panel">
@@ -204,7 +204,7 @@
           <ul class="l">
             <li>Recommendation calculations run locally in your browser. The app does not upload your ratings or save them between sessions.</li>
             <li>The CSVs provide catalogue metadata and aggregate IMDb rating/vote counts, but not per-user rating histories, so recommendations are content-based rather than collaborative. The benchmark is unavailable for this source.</li>
-            <li>The app uses <code>posters/MOVIE_INDEX.jpg</code> when available. If you enter a TMDB API Read Access Token, the app looks up posters for the currently displayed films by IMDb ID. Unavailable TMDB posters fall back to local JPGs and then the built-in SVG generator.</li>
+            <li>If you enter a TMDB API Read Access Token, the app fetches posters directly from TMDB for the currently displayed films, using IMDb IDs and a title/year search fallback. Movies without an available TMDB poster use the built-in SVG generator; no local <code>posters/</code> folder is required.</li>
           </ul>
 
           <h3>Credits and image sources</h3>
@@ -224,6 +224,6 @@
 
     <script src="recommender.js?v=20261022-4"></script>
     <script src="csv-database.js?v=20261022-4"></script>
-    <script src="app.js?v=20261022-4"></script>
+    <script src="app.js?v=20261022-5"></script>
   </body>
 </html>
